@@ -14,7 +14,7 @@ use rand::Rng;
 use solana_program::pubkey::Pubkey;
 use solana_rpc_client::spinner;
 use solana_sdk::signer::Signer;
-const MIN_DIFFICULTY: u32 = 16;
+const MIN_DIFFICULTY: u32 = 14;
 
 use crate::{
     args::MineArgs,
