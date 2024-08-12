@@ -54,7 +54,7 @@ impl Miner {
         let signer = self.signer();
         let client = self.rpc_client.clone();
         let fee_payer = self.fee_payer();
-        let mut send_client = self.rpc_client.clone();
+        let mut send_client = self.jito_client.clone();
 
         // Return error, if balance is zero
         self.check_balance().await;
