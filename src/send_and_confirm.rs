@@ -31,11 +31,11 @@ const MIN_SOL_BALANCE: f64 = 0.005;
 
 const RPC_RETRIES: usize = 0;
 const _SIMULATION_RETRIES: usize = 4;
-const GATEWAY_RETRIES: usize = 150;
-const CONFIRM_RETRIES: usize = 8;
+const GATEWAY_RETRIES: usize = 50;
+const CONFIRM_RETRIES: usize = 10;
 
 const CONFIRM_DELAY: u64 = 500;
-const GATEWAY_DELAY: u64 = 0;
+const GATEWAY_DELAY: u64 = 300;
 
 pub enum ComputeBudget {
     #[allow(dead_code)]
@@ -118,39 +118,32 @@ impl Miner {
 
         // Submit tx
         let mut attempts = 0;
+        let mut fee = self.priority_fee.unwrap_or(0);
+
         loop {
             progress_bar.set_message(format!("Submitting transaction... (attempt {})", attempts));
 
             // Sign tx with a new blockhash (after approximately ~45 sec)
-            if attempts % 10 == 0 {
+            if attempts % 2 == 0 {
                 // Reset the compute unit price
-                if self.dynamic_fee {
-                    let fee = match self.dynamic_fee().await {
-                        Ok(fee) => {
-                            progress_bar.println(format!("  Priority fee: {} microlamports", fee));
-                            fee
-                        }
-                        Err(err) => {
-                            let fee = self.priority_fee.unwrap_or(0);
-                            log_warning(
-                                &progress_bar,
-                                &format!(
-                                    "{} Falling back to static value: {} microlamports",
-                                    err,
-                                    fee
-                                )
-                            );
-                            fee
-                        }
-                    };
-
-                    final_ixs.remove(1);
-                    final_ixs.insert(1, ComputeBudgetInstruction::set_compute_unit_price(fee));
-                    tx = Transaction::new_with_payer(&final_ixs, Some(&fee_payer.pubkey()));
+                if attempts > 0 {
+                    fee += 1;
                 }
 
+                progress_bar.println(
+                    format!("  Priority fee: {} microlamports", fee)
+                );
+
+                final_ixs.remove(1);
+                final_ixs.insert(1, ComputeBudgetInstruction::set_compute_unit_price(
+                    fee as u64
+                ));
+                tx = Transaction::new_with_payer(&final_ixs, Some(&fee_payer.pubkey()));
+
                 // Resign the tx
-                let (hash, _slot) = get_latest_blockhash_with_retries(&client).await?;
+                let (hash, _slot) = client
+                    .get_latest_blockhash_with_commitment(self.rpc_client.commitment())
+                    .await?;
                 if signer.pubkey() == fee_payer.pubkey() {
                     tx.sign(&[&signer], hash);
                 } else {
@@ -168,103 +161,45 @@ impl Miner {
                         return Ok(sig);
                     }
 
+                    progress_bar.println(
+                        format!("  Transaction get status...: {}", sig)
+                    );
+
                     // Confirm transaction
-                    'confirm: for _ in 0..CONFIRM_RETRIES {
+                    for _ in 0..CONFIRM_RETRIES {
                         std::thread::sleep(Duration::from_millis(CONFIRM_DELAY));
                         match client.get_signature_statuses(&[sig]).await {
                             Ok(signature_statuses) => {
                                 for status in signature_statuses.value {
                                     if let Some(status) = status {
                                         if let Some(err) = status.err {
-                                            match err {
-                                                // Instruction error
-                                                solana_sdk::transaction::TransactionError::InstructionError(
-                                                    _,
-                                                    err,
-                                                ) => {
-                                                    match err {
-                                                        // Custom instruction error, parse into OreError
-                                                        solana_program::instruction::InstructionError::Custom(
-                                                            err_code,
-                                                        ) => {
-                                                            match err_code {
-                                                                e if
-                                                                    e ==
-                                                                    (OreError::NeedsReset as u32)
-                                                                => {
-                                                                    attempts = 0;
-                                                                    log_error(
-                                                                        &progress_bar,
-                                                                        "Needs reset. Retrying...",
-                                                                        false
-                                                                    );
-                                                                    break 'confirm;
-                                                                }
-                                                                _ => {
-                                                                    log_error(
-                                                                        &progress_bar,
-                                                                        &err.to_string(),
-                                                                        true
-                                                                    );
-                                                                    return Err(ClientError {
-                                                                        request: None,
-                                                                        kind: ClientErrorKind::Custom(
-                                                                            err.to_string()
-                                                                        ),
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-
-                                                        // Non custom instruction error, return
-                                                        _ => {
-                                                            log_error(
-                                                                &progress_bar,
-                                                                &err.to_string(),
-                                                                true
-                                                            );
-                                                            return Err(ClientError {
-                                                                request: None,
-                                                                kind: ClientErrorKind::Custom(
-                                                                    err.to_string()
-                                                                ),
-                                                            });
-                                                        }
-                                                    }
-                                                }
-
-                                                // Non instruction error, return
-                                                _ => {
-                                                    log_error(
-                                                        &progress_bar,
-                                                        &err.to_string(),
-                                                        true
-                                                    );
-                                                    return Err(ClientError {
-                                                        request: None,
-                                                        kind: ClientErrorKind::Custom(
-                                                            err.to_string()
-                                                        ),
-                                                    });
-                                                }
-                                            }
-                                        } else if
-                                            let Some(confirmation) = status.confirmation_status
-                                        {
+                                            progress_bar.finish_with_message(format!(
+                                                "{}: {}",
+                                                "ERROR".bold().red(),
+                                                err
+                                            ));
+                                            return Err(ClientError {
+                                                request: None,
+                                                kind: ClientErrorKind::Custom(err.to_string()),
+                                            });
+                                        }
+                                        if let Some(confirmation) = status.confirmation_status {
                                             match confirmation {
                                                 TransactionConfirmationStatus::Processed => {}
-                                                | TransactionConfirmationStatus::Confirmed
+                                                TransactionConfirmationStatus::Confirmed
                                                 | TransactionConfirmationStatus::Finalized => {
                                                     let now = Local::now();
-                                                    let formatted_time = now
-                                                        .format("%Y-%m-%d %H:%M:%S")
-                                                        .to_string();
-                                                    progress_bar.println(
-                                                        format!("  Timestamp: {}", formatted_time)
-                                                    );
-                                                    progress_bar.finish_with_message(
-                                                        format!("{} {}", "OK".bold().green(), sig)
-                                                    );
+                                                    let formatted_time =
+                                                        now.format("%Y-%m-%d %H:%M:%S").to_string();
+                                                    progress_bar.println(format!(
+                                                        "  Timestamp: {}",
+                                                        formatted_time
+                                                    ));
+                                                    progress_bar.finish_with_message(format!(
+                                                        "{} {}",
+                                                        "OK".bold().green(),
+                                                        sig
+                                                    ));
                                                     return Ok(sig);
                                                 }
                                             }
@@ -275,7 +210,11 @@ impl Miner {
 
                             // Handle confirmation errors
                             Err(err) => {
-                                log_error(&progress_bar, &err.kind().to_string(), false);
+                                progress_bar.set_message(format!(
+                                    "{}: {}",
+                                    "ERROR".bold().red(),
+                                    err.kind().to_string()
+                                ));
                             }
                         }
                     }
@@ -283,7 +222,12 @@ impl Miner {
 
                 // Handle submit errors
                 Err(err) => {
-                    log_error(&progress_bar, &err.kind().to_string(), false);
+                    progress_bar.set_message(format!(
+                        "{}: {}",
+                        "ERROR".bold().red(),
+                        err.kind().to_string()
+                    ));
+                    break Ok(Default::default());
                 }
             }
 
