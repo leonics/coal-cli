@@ -14,6 +14,7 @@ use rand::Rng;
 use solana_program::pubkey::Pubkey;
 use solana_rpc_client::spinner;
 use solana_sdk::signer::Signer;
+const MIN_DIFFICULTY: u32 = 16;
 
 use crate::{
     args::MineArgs,
@@ -63,7 +64,7 @@ impl Miner {
 
             // Run drillx
             let solution =
-                Self::find_hash_par(proof, cutoff_time, args.cores, config.min_difficulty as u32)
+                Self::find_hash_par(proof, cutoff_time, args.cores, MIN_DIFFICULTY)
                     .await;
 
             // Build instruction set
@@ -145,30 +146,24 @@ impl Miner {
                             }
 
                             // Exit if time has elapsed
-                            if nonce % 100 == 0 {
-                                let global_best_difficulty =
-                                    *global_best_difficulty.read().unwrap();
-                                if timer.elapsed().as_secs().ge(&cutoff_time) {
-                                    if i.id == 0 {
-                                        progress_bar.set_message(format!(
-                                            "Extracting... (difficulty {})",
-                                            global_best_difficulty,
-                                        ));
-                                    }
-                                    if global_best_difficulty.ge(&min_difficulty) {
-                                        // Mine until min difficulty has been met
-                                        break;
-                                    }
-                                } else if i.id == 0 {
+                            let global_best_difficulty =
+                                *global_best_difficulty.read().unwrap();
+                            if timer.elapsed().as_secs().ge(&cutoff_time) {
+                                if i.id == 0 {
                                     progress_bar.set_message(format!(
-                                        "Extracting... (difficulty {}, time {})",
+                                        "Find best hash... (difficulty {})",
                                         global_best_difficulty,
-                                        format_duration(
-                                            cutoff_time.saturating_sub(timer.elapsed().as_secs())
-                                                as u32
-                                        ),
                                     ));
                                 }
+                                if global_best_difficulty.ge(&min_difficulty) {
+                                    // Mine until min difficulty has been met
+                                    break;
+                                }
+                            } else if i.id == 0 {
+                                progress_bar.set_message(format!(
+                                    "Extracting... (difficulty {})",
+                                    global_best_difficulty
+                                ));
                             }
 
                             // Increment nonce
