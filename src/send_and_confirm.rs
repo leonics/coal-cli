@@ -215,6 +215,7 @@ impl Miner {
                                     "ERROR".bold().red(),
                                     err.kind().to_string()
                                 ));
+                                return Ok(Default::default());
                             }
                         }
                     }
@@ -227,7 +228,7 @@ impl Miner {
                         "ERROR".bold().red(),
                         err.kind().to_string()
                     ));
-                    break Ok(Default::default());
+                    return Ok(Default::default());
                 }
             }
 
