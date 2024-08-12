@@ -148,22 +148,16 @@ impl Miner {
                             // Exit if time has elapsed
                             let global_best_difficulty =
                                 *global_best_difficulty.read().unwrap();
-                            if timer.elapsed().as_secs().ge(&cutoff_time) {
-                                if i.id == 0 {
-                                    progress_bar.set_message(format!(
-                                        "Find best hash... (difficulty {})",
-                                        global_best_difficulty,
-                                    ));
-                                }
-                                if global_best_difficulty.ge(&min_difficulty) {
-                                    // Mine until min difficulty has been met
-                                    break;
-                                }
-                            } else if i.id == 0 {
+
+                            if i.id == 0 {
                                 progress_bar.set_message(format!(
-                                    "Extracting... (difficulty {})",
-                                    global_best_difficulty
+                                    "Find best hash... (difficulty {})",
+                                    global_best_difficulty,
                                 ));
+                            }
+                            if global_best_difficulty.ge(&min_difficulty) {
+                                // Mine until min difficulty has been met
+                                break;
                             }
 
                             // Increment nonce
