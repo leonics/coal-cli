@@ -14,7 +14,7 @@ use rand::Rng;
 use solana_program::pubkey::Pubkey;
 use solana_rpc_client::spinner;
 use solana_sdk::signer::Signer;
-const MIN_DIFFICULTY: u32 = 14;
+const MIN_DIFFICULTY: u32 = 15;
 
 use crate::{
     args::MineArgs,
@@ -84,9 +84,8 @@ impl Miner {
             ));
 
             // Submit transaction
-            self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
-                .await
-                .ok();
+            let _ = self.send_and_confirm(&ixs, ComputeBudget::Fixed(compute_budget), false)
+                .await;
         }
     }
 
